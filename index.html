@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vehicle Vision</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header class="app-header">
+        <div class="branding">
+          <h1>Vehicle Vision</h1>
+          <p class="description">
+            Configure and follow TTC vehicles in real time using the NextBus feed.
+          </p>
+        </div>
+      </header>
+      <div class="app-body">
+        <aside class="control-panel" aria-label="Vehicle configuration">
+          <div class="panel-section">
+            <h2>Tracking setup</h2>
+            <p class="panel-helper">
+              Pick one or more routes and optionally focus on specific vehicles.
+            </p>
+            <div class="field-group">
+              <div class="field-heading">
+                <span class="field-label">Routes</span>
+                <button class="ghost-button" id="select-all-routes" type="button">
+                  Select all
+                </button>
+              </div>
+              <div class="option-list" id="route-options" role="group" aria-label="Route options"></div>
+            </div>
+            <div class="field-group">
+              <div class="field-heading">
+                <span class="field-label">Vehicles</span>
+                <button class="ghost-button" id="clear-vehicle-filter" type="button">
+                  Track all
+                </button>
+              </div>
+              <p class="field-helper">
+                Choosing vehicles limits the view to those IDs. Leave empty to follow every bus on the selected routes.
+              </p>
+              <div class="option-list" id="vehicle-options" role="group" aria-label="Vehicle options"></div>
+            </div>
+          </div>
+        </aside>
+        <section id="map" aria-label="Vehicle map"></section>
+      </div>
+    </main>
+
+    <script type="module" src="app.js"></script>
+    <script
+      defer
+      src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap"
+    ></script>
+  </body>
+</html>
