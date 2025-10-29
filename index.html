@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vehicle Vision</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header class="app-header">
+        <div class="branding">
+          <h1>Vehicle Vision</h1>
+          <p class="description">
+            Configure and follow TTC vehicles in real time using the NextBus feed.
+          </p>
+        </div>
+      </header>
+      <div class="app-body">
+        <aside class="control-panel" aria-label="Vehicle configuration">
+          <div class="panel-section">
+            <h2>Vehicle tracking</h2>
+            <p class="panel-helper">
+              Add TTC vehicle numbers to follow their live positions on the map.
+            </p>
+            <form class="vehicle-form" id="vehicle-form">
+              <label class="field-label" for="vehicle-input">Vehicle number</label>
+              <div class="vehicle-input-row">
+                <input
+                  id="vehicle-input"
+                  name="vehicle"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="\\d{4}"
+                  maxlength="4"
+                  placeholder="e.g. 1234"
+                  aria-describedby="vehicle-helper"
+                  required
+                />
+                <button class="primary-button" type="submit">Add</button>
+              </div>
+              <p class="field-helper" id="vehicle-helper">
+                Enter the four-digit vehicle number and press Add to start tracking.
+              </p>
+            </form>
+            <div class="field-group">
+              <span class="field-label">Tracked vehicles</span>
+              <div
+                class="vehicle-pill-list"
+                id="tracked-vehicles"
+                role="list"
+                aria-live="polite"
+              ></div>
+              <div class="empty-state" id="vehicle-empty-state">
+                No vehicles tracked yet. Add a vehicle number to begin.
+              </div>
+            </div>
+          </div>
+        </aside>
+        <section id="map" aria-label="Vehicle map">
+          <div id="map-status" class="map-status" role="status">Loading map…</div>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
