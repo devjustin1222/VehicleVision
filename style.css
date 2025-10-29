@@ -257,55 +257,56 @@ body {
 .vehicle-label {
   position: absolute;
   transform-origin: 50% 50%;
-  width: 88px;
-  height: 34px;
+  width: 96px;
+  height: 36px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 0 16px 0 34px;
-  background: linear-gradient(135deg, rgba(255, 215, 0, 0.95), #fbbf24);
-  border: 2px solid #b8860b;
-  border-radius: 12px;
-  color: #0f172a;
+  justify-content: center;
+  padding: 0 30px 0 28px;
+  border-radius: 14px;
+  background: linear-gradient(140deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.8));
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.4);
+  color: #f8fafc;
   font-size: 0.85rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   pointer-events: none;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.35);
   text-transform: none;
+  overflow: hidden;
 }
 
 .vehicle-label::before {
   content: "";
   position: absolute;
-  left: 8px;
+  left: 6px;
   top: 50%;
-  width: 22px;
-  height: 24px;
+  width: 24px;
+  height: 26px;
   transform: translateY(-50%);
-  border-radius: 12px 4px 4px 12px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 239, 153, 0.85));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  border-radius: 12px 10px 10px 12px;
+  background: linear-gradient(145deg, rgba(56, 189, 248, 0.9), rgba(14, 165, 233, 0.95));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 0 8px rgba(56, 189, 248, 0.55);
 }
 
 .vehicle-label::after {
   content: "";
   position: absolute;
-  right: 10px;
+  right: 8px;
   top: 50%;
-  width: 6px;
-  height: 12px;
+  width: 8px;
+  height: 16px;
   transform: translateY(-50%);
-  border-radius: 3px;
-  background: linear-gradient(180deg, #f97316, #dc2626);
-  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.25);
+  border-radius: 4px;
+  background: linear-gradient(180deg, #f87171, #b91c1c);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.55);
 }
 
 .vehicle-label .label-text {
   position: relative;
   z-index: 1;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  text-shadow: 0 2px 4px rgba(15, 23, 42, 0.65);
   line-height: 1;
 }
 

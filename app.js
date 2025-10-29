@@ -10,28 +10,12 @@ const MAP_STATUS_ID = "map-status";
 let map;
 
 class VehicleFetcher {
-  constructor(vehicleIds = []) {
-    this.vehicleIds = [...vehicleIds];
+  constructor() {
+    this.lastTime = null;
   }
 
-  setVehicleIds(vehicleIds) {
-    this.vehicleIds = [...vehicleIds];
-  }
-
-  async fetchAll() {
-    if (!this.vehicleIds.length) {
-      return [];
-    }
-
-    const requests = this.vehicleIds.map((vehicleId) =>
-      this.fetchVehicle(vehicleId).catch((error) => {
-        console.error(`Vehicle fetch failed for ${vehicleId}`, error);
-        return null;
-      })
-    );
-
-    const vehicles = await Promise.all(requests);
-    return vehicles.filter((vehicle) => Boolean(vehicle));
+  reset() {
+    this.lastTime = null;
   }
 
   async fetchVehicle(vehicleId) {
@@ -66,6 +50,50 @@ class VehicleFetcher {
         10
       ),
       speedKmHr: parseFloat(vehicleNode.getAttribute("speedKmHr") || "0"),
+    };
+  }
+
+  async fetchUpdates() {
+    const url = new URL(API_BASE_URL);
+    url.searchParams.set("command", "vehicleLocations");
+    url.searchParams.set("a", AGENCY_TAG);
+    url.searchParams.set("t", this.lastTime ?? "0");
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      throw new Error("Failed to fetch vehicle updates");
+    }
+
+    const text = await response.text();
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(text, "text/xml");
+
+    const lastTimeNode = xml.querySelector("lastTime");
+    const nextTime = lastTimeNode?.getAttribute("time");
+    if (nextTime) {
+      this.lastTime = nextTime;
+    }
+
+    const vehicleNodes = Array.from(xml.querySelectorAll("vehicle"));
+    const vehicles = vehicleNodes
+      .map((vehicleNode) => ({
+        id: vehicleNode.getAttribute("id"),
+        routeTag: vehicleNode.getAttribute("routeTag"),
+        heading: parseFloat(vehicleNode.getAttribute("heading") || "0"),
+        lat: parseFloat(vehicleNode.getAttribute("lat")),
+        lon: parseFloat(vehicleNode.getAttribute("lon")),
+        predictable: vehicleNode.getAttribute("predictable") !== "false",
+        secsSinceReport: parseInt(
+          vehicleNode.getAttribute("secsSinceReport") || "0",
+          10
+        ),
+        speedKmHr: parseFloat(vehicleNode.getAttribute("speedKmHr") || "0"),
+      }))
+      .filter((vehicle) => vehicle.id && Number.isFinite(vehicle.lat));
+
+    return {
+      vehicles,
+      lastTime: this.lastTime,
     };
   }
 }
@@ -303,21 +331,25 @@ function createVehicleLayerClass(googleMaps) {
     constructor(mapInstance, vehicleIds = []) {
       this.map = mapInstance;
       this.vehicleIds = new Set(vehicleIds);
-      this.fetcher = new VehicleFetcher([...this.vehicleIds]);
+      this.fetcher = new VehicleFetcher();
       this.overlays = new Map();
       this.timerId = null;
       this.refreshPromise = null;
       this.pendingRefreshRequiresClear = false;
       this.onVehiclesUpdated = null;
       this.lastRefreshTimestamp = null;
+      this.feedVehicleData = new Map();
     }
 
     async start() {
       this.stop();
-      try {
-        await this.refresh();
-      } catch (error) {
-        console.error("Vehicle refresh failed", error);
+      this.fetcher.reset();
+      if (this.vehicleIds.size) {
+        try {
+          await this.refresh(true);
+        } catch (error) {
+          console.error("Vehicle refresh failed", error);
+        }
       }
       this.scheduleNext();
     }
@@ -339,16 +371,79 @@ function createVehicleLayerClass(googleMaps) {
 
     async setVehicleIds(vehicleIds) {
       const uniqueIds = [...new Set(vehicleIds.filter((id) => id))];
-      this.vehicleIds = new Set(uniqueIds);
-      this.fetcher.setVehicleIds(uniqueIds);
-      this.stop();
-      this.lastRefreshTimestamp = null;
-      try {
-        await this.refresh(true);
-      } catch (error) {
-        console.error("Vehicle refresh failed", error);
+      const nextIds = new Set(uniqueIds);
+      const currentIds = new Set(this.vehicleIds);
+
+      for (const id of currentIds) {
+        if (!nextIds.has(id)) {
+          this.removeVehicle(id);
+        }
       }
-      this.scheduleNext();
+
+      for (const id of uniqueIds) {
+        if (!currentIds.has(id)) {
+          await this.addVehicle(id);
+        }
+      }
+    }
+
+    async addVehicle(vehicleId) {
+      if (!vehicleId) {
+        return;
+      }
+
+      if (this.vehicleIds.has(vehicleId)) {
+        this.emitVehicleStatus();
+        return;
+      }
+
+      this.vehicleIds.add(vehicleId);
+
+      let vehicle = this.feedVehicleData.get(vehicleId) || null;
+      if (!vehicle) {
+        try {
+          vehicle = await this.fetcher.fetchVehicle(vehicleId);
+        } catch (error) {
+          console.error(`Vehicle fetch failed for ${vehicleId}`, error);
+        }
+        if (vehicle) {
+          this.feedVehicleData.set(vehicle.id, vehicle);
+        }
+      }
+
+      if (vehicle) {
+        this.ensureOverlay(vehicle, MIN_ANIMATION_DURATION_MS);
+      }
+
+      this.emitVehicleStatus(vehicle ? new Set([vehicleId]) : new Set());
+
+      if (!this.timerId) {
+        this.scheduleNext();
+      }
+
+      if (!this.refreshPromise) {
+        this.refresh().catch((error) => {
+          console.error("Vehicle refresh failed", error);
+        });
+      }
+    }
+
+    removeVehicle(vehicleId) {
+      if (!this.vehicleIds.delete(vehicleId)) {
+        return;
+      }
+
+      const overlay = this.overlays.get(vehicleId);
+      if (overlay) {
+        overlay.setMap(null);
+        this.overlays.delete(vehicleId);
+      }
+
+      this.emitVehicleStatus();
+
+      if (!this.vehicleIds.size) {
+        this.stop();
+      }
     }
 
     async refresh(clearOverlays = false) {
@@ -363,14 +458,12 @@ function createVehicleLayerClass(googleMaps) {
         this.clearOverlays();
       }
 
-      const executeRefresh = async () => {
-        if (!this.vehicleIds.size) {
-          this.onVehiclesUpdated?.([]);
-          this.clearOverlays();
-          this.lastRefreshTimestamp = null;
-          return;
-        }
+      if (!this.vehicleIds.size) {
+        this.emitVehicleStatus();
+        return;
+      }
 
+      const executeRefresh = async () => {
         const now = getTimestamp();
         const elapsed = this.lastRefreshTimestamp
           ? now - this.lastRefreshTimestamp
@@ -382,22 +475,26 @@ function createVehicleLayerClass(googleMaps) {
         );
         this.lastRefreshTimestamp = now;
 
-        const vehicles = await this.fetcher.fetchAll();
-        const activeVehicles = vehicles.filter((vehicle) =>
-          this.vehicleIds.has(vehicle.id)
-        );
-        this.onVehiclesUpdated?.(activeVehicles);
+        const { vehicles: updates } = await this.fetcher.fetchUpdates();
+        const updatedIds = new Set();
 
-        const seenIds = new Set();
-        for (const vehicle of activeVehicles) {
+        for (const vehicle of updates) {
           if (
+            !vehicle ||
             !Number.isFinite(vehicle.lat) ||
             !Number.isFinite(vehicle.lon)
           ) {
             continue;
           }
-          const key = vehicle.id;
-          seenIds.add(key);
+
+          this.feedVehicleData.set(vehicle.id, vehicle);
+
+          if (!this.vehicleIds.has(vehicle.id)) {
+            continue;
+          }
+
+          updatedIds.add(vehicle.id);
+
           const secsSinceReport =
             Number.isFinite(vehicle.secsSinceReport) &&
             vehicle.secsSinceReport >= 0
@@ -412,25 +509,17 @@ function createVehicleLayerClass(googleMaps) {
             MIN_ANIMATION_DURATION_MS,
             MAX_ANIMATION_DURATION_MS
           );
-          if (this.overlays.has(key)) {
-            const overlay = this.overlays.get(key);
-            overlay.queueUpdate(vehicle, frameDuration);
-          } else {
-            const overlay = new VehicleOverlay(this.map, vehicle, {
-              lagFrameCount: FRAME_LAG_COUNT,
-              maxPendingFrames: MAX_PENDING_FRAMES,
-            });
-            this.overlays.set(key, overlay);
-            overlay.queueUpdate(vehicle, frameDuration);
-          }
+          this.ensureOverlay(vehicle, frameDuration);
         }
 
         for (const [key, overlay] of this.overlays.entries()) {
-          if (!seenIds.has(key)) {
+          if (!this.vehicleIds.has(key)) {
             overlay.setMap(null);
             this.overlays.delete(key);
           }
         }
+
+        this.emitVehicleStatus(updatedIds);
       };
 
       this.refreshPromise = executeRefresh();
@@ -464,6 +553,41 @@ function createVehicleLayerClass(googleMaps) {
         this.scheduleNext();
       }, REFRESH_INTERVAL_MS);
     }
+
+    ensureOverlay(vehicle, frameDuration) {
+      if (!vehicle?.id) {
+        return;
+      }
+
+      const key = vehicle.id;
+      if (this.overlays.has(key)) {
+        this.overlays.get(key).queueUpdate(vehicle, frameDuration);
+        return;
+      }
+
+      const overlay = new VehicleOverlay(this.map, vehicle, {
+        lagFrameCount: FRAME_LAG_COUNT,
+        maxPendingFrames: MAX_PENDING_FRAMES,
+      });
+      this.overlays.set(key, overlay);
+      overlay.queueUpdate(vehicle, frameDuration);
+    }
+
+    emitVehicleStatus(updatedIds = new Set()) {
+      if (typeof this.onVehiclesUpdated !== "function") {
+        return;
+      }
+
+      const vehicles = new Map();
+      for (const vehicleId of this.vehicleIds) {
+        vehicles.set(vehicleId, this.feedVehicleData.get(vehicleId) || null);
+      }
+
+      this.onVehiclesUpdated({
+        vehicles,
+        updatedVehicleIds: new Set(updatedIds),
+      });
+    }
   };
 }
 
@@ -478,8 +602,8 @@ function createControlPanelClass() {
       this.vehicleItems = new Map();
       this.vehicleOrder = [];
 
-      this.vehicleLayer.onVehiclesUpdated = (vehicles) => {
-        this.updateVehicleStatuses(vehicles);
+      this.vehicleLayer.onVehiclesUpdated = (snapshot) => {
+        this.updateVehicleStatuses(snapshot);
       };
 
       this.attachEvents();
@@ -487,9 +611,9 @@ function createControlPanelClass() {
     }
 
     attachEvents() {
-      this.form?.addEventListener("submit", (event) => {
+      this.form?.addEventListener("submit", async (event) => {
         event.preventDefault();
-        this.handleFormSubmit();
+        await this.handleFormSubmit();
       });
 
       this.input?.addEventListener("input", () => {
@@ -497,7 +621,7 @@ function createControlPanelClass() {
       });
     }
 
-    handleFormSubmit() {
+    async handleFormSubmit() {
       if (!this.input) {
         return;
       }
@@ -515,7 +639,7 @@ function createControlPanelClass() {
       }
 
       this.input.value = "";
-      this.addVehicle(vehicleId);
+      await this.addVehicle(vehicleId);
     }
 
     normalizeVehicleId(value) {
@@ -533,13 +657,13 @@ function createControlPanelClass() {
       return digitsOnly;
     }
 
-    addVehicle(vehicleId) {
+    async addVehicle(vehicleId) {
       this.vehicleOrder.push(vehicleId);
       const item = this.createVehicleItem(vehicleId);
       this.vehicleItems.set(vehicleId, item);
       this.list?.appendChild(item.element);
       this.updateEmptyState();
-      this.vehicleLayer.setVehicleIds([...this.vehicleOrder]);
+      await this.vehicleLayer.addVehicle(vehicleId);
       this.input?.focus();
     }
 
@@ -551,7 +675,7 @@ function createControlPanelClass() {
       }
       this.vehicleItems.delete(vehicleId);
       this.updateEmptyState();
-      this.vehicleLayer.setVehicleIds([...this.vehicleOrder]);
+      this.vehicleLayer.removeVehicle(vehicleId);
     }
 
     flashVehicle(vehicleId) {
@@ -594,7 +718,7 @@ function createControlPanelClass() {
 
       const status = document.createElement("div");
       status.className = "vehicle-pill__status";
-      status.textContent = "Waiting for updates…";
+      status.textContent = "Waiting for location…";
 
       wrapper.appendChild(header);
       wrapper.appendChild(status);
@@ -602,32 +726,45 @@ function createControlPanelClass() {
       return { element: wrapper, status };
     }
 
-    updateVehicleStatuses(vehicles) {
-      const vehicleMap = new Map((vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
+    updateVehicleStatuses(snapshot) {
+      const vehicles = snapshot?.vehicles instanceof Map ? snapshot.vehicles : new Map();
+      const updatedVehicleIds = snapshot?.updatedVehicleIds instanceof Set
+        ? snapshot.updatedVehicleIds
+        : new Set(snapshot?.updatedVehicleIds || []);
+
       for (const vehicleId of this.vehicleOrder) {
         const item = this.vehicleItems.get(vehicleId);
         if (!item) {
           continue;
         }
-        const vehicle = vehicleMap.get(vehicleId);
-        if (vehicle) {
-          const parts = [];
-          if (vehicle.routeTag) {
-            parts.push(`Route ${vehicle.routeTag}`);
-          }
-          if (Number.isFinite(vehicle.secsSinceReport)) {
-            if (vehicle.secsSinceReport <= 5) {
-              parts.push("Just now");
-            } else {
-              parts.push(`${vehicle.secsSinceReport}s ago`);
-            }
-          }
-          item.status.textContent = parts.length
-            ? parts.join(" • ")
-            : "Receiving updates";
-        } else {
-          item.status.textContent = "No recent data";
+
+        const vehicle = vehicles.get(vehicleId) || null;
+
+        if (!vehicle) {
+          item.status.textContent = "Waiting for location…";
+          continue;
         }
+
+        const parts = [];
+        if (vehicle.routeTag) {
+          parts.push(`Route ${vehicle.routeTag}`);
+        }
+
+        if (Number.isFinite(vehicle.secsSinceReport)) {
+          if (vehicle.secsSinceReport <= 5) {
+            parts.push("Just now");
+          } else {
+            parts.push(`${vehicle.secsSinceReport}s ago`);
+          }
+        }
+
+        if (!updatedVehicleIds.has(vehicleId)) {
+          parts.push("No movement since last update");
+        }
+
+        item.status.textContent = parts.length
+          ? parts.join(" • ")
+          : "Location received";
       }
     }
 
