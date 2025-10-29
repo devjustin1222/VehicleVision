@@ -256,38 +256,57 @@ body {
 
 .vehicle-label {
   position: absolute;
-  transform-origin: center center;
-  width: 56px;
-  height: 28px;
+  transform-origin: 50% 50%;
+  width: 88px;
+  height: 34px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: rgba(255, 215, 0, 0.95);
+  justify-content: flex-end;
+  padding: 0 16px 0 34px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.95), #fbbf24);
   border: 2px solid #b8860b;
-  border-radius: 6px;
-  color: #1a202c;
-  font-size: 0.8rem;
+  border-radius: 12px;
+  color: #0f172a;
+  font-size: 0.85rem;
   font-weight: 700;
-  text-align: center;
+  letter-spacing: 0.04em;
   pointer-events: none;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.35);
+  text-transform: none;
+}
+
+.vehicle-label::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 22px;
+  height: 24px;
+  transform: translateY(-50%);
+  border-radius: 12px 4px 4px 12px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 239, 153, 0.85));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 
 .vehicle-label::after {
   content: "";
   position: absolute;
-  bottom: -6px;
-  left: 50%;
-  transform: translateX(-50%) rotate(45deg);
-  width: 10px;
-  height: 10px;
-  background: rgba(255, 215, 0, 0.95);
-  border-left: 2px solid #b8860b;
-  border-bottom: 2px solid #b8860b;
+  right: 10px;
+  top: 50%;
+  width: 6px;
+  height: 12px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background: linear-gradient(180deg, #f97316, #dc2626);
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.25);
 }
 
 .vehicle-label .label-text {
+  position: relative;
   z-index: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  line-height: 1;
 }
 
 @media (max-width: 1024px) {

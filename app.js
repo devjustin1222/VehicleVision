@@ -1,5 +1,8 @@
 const REFRESH_INTERVAL_MS = 5000;
-const ANIMATION_DURATION_MS = 1200;
+const FRAME_LAG_COUNT = 1;
+const MAX_PENDING_FRAMES = 3;
+const MIN_ANIMATION_DURATION_MS = REFRESH_INTERVAL_MS;
+const MAX_ANIMATION_DURATION_MS = REFRESH_INTERVAL_MS * 3;
 const API_BASE_URL = "https://retro.umoiq.com/service/publicXMLFeed";
 const AGENCY_TAG = "ttc";
 const MAP_STATUS_ID = "map-status";
@@ -85,6 +88,16 @@ function shortestHeadingDelta(start, end) {
   return delta;
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getTimestamp() {
+  return typeof performance !== "undefined" && performance.now
+    ? performance.now()
+    : Date.now();
+}
+
 function interpolateLatLng(start, end, fraction, googleMaps) {
   const lat = start.lat() + (end.lat() - start.lat()) * fraction;
   const lng = start.lng() + (end.lng() - start.lng()) * fraction;
@@ -93,17 +106,21 @@ function interpolateLatLng(start, end, fraction, googleMaps) {
 
 function createVehicleOverlayClass(googleMaps) {
   return class VehicleOverlay extends googleMaps.OverlayView {
-    constructor(mapInstance, vehicle) {
+    constructor(mapInstance, vehicle, options = {}) {
       super();
       this.map = mapInstance;
       this.vehicle = vehicle;
       this.position = new googleMaps.LatLng(vehicle.lat, vehicle.lon);
-      this.heading = vehicle.heading || 0;
+      this.heading = normalizeHeading(vehicle.heading || 0);
       this.targetPosition = this.position;
       this.targetHeading = this.heading;
       this.animationStart = null;
       this.animationFrame = null;
       this.div = null;
+      this.isAnimating = false;
+      this.frameQueue = [];
+      this.lagFrameCount = Math.max(0, options.lagFrameCount ?? 0);
+      this.maxPendingFrames = Math.max(1, options.maxPendingFrames ?? MAX_PENDING_FRAMES);
       this.setMap(mapInstance);
     }
 
@@ -120,11 +137,19 @@ function createVehicleOverlayClass(googleMaps) {
 
       const panes = this.getPanes();
       panes.overlayLayer.appendChild(div);
+      this.draw();
+      this.maybeStartNextAnimation();
     }
 
     onRemove() {
-      if (this.div?.parentNode) {
+      if (this.animationFrame) {
         cancelAnimationFrame(this.animationFrame);
+      }
+      this.animationFrame = null;
+      this.animationStart = null;
+      this.isAnimating = false;
+      this.frameQueue = [];
+      if (this.div?.parentNode) {
         this.div.parentNode.removeChild(this.div);
       }
       this.div = null;
@@ -144,13 +169,33 @@ function createVehicleOverlayClass(googleMaps) {
       this.div.style.left = `${position.x}px`;
       this.div.style.top = `${position.y}px`;
 
-      this.div.style.transform = `translate(-50%, -50%) rotate(${this.heading}deg)`;
+      const rotation = this.heading - 90;
+      this.div.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
     }
 
-    update(vehicle) {
+    queueUpdate(vehicle, durationMs) {
+      if (!Number.isFinite(vehicle.lat) || !Number.isFinite(vehicle.lon)) {
+        return;
+      }
+
       this.vehicle = vehicle;
       this.targetPosition = new googleMaps.LatLng(vehicle.lat, vehicle.lon);
       this.targetHeading = vehicle.heading || 0;
+
+      const frame = {
+        position: this.targetPosition,
+        heading: this.targetHeading,
+        duration: durationMs,
+      };
+
+      this.frameQueue.push(frame);
+
+      const maxQueueLength = this.lagFrameCount + this.maxPendingFrames;
+      if (this.frameQueue.length > maxQueueLength) {
+        const dropCount = this.frameQueue.length - maxQueueLength;
+        this.frameQueue.splice(0, dropCount);
+      }
+
       if (!this.div) {
         return;
       }
@@ -159,17 +204,51 @@ function createVehicleOverlayClass(googleMaps) {
         this.div.firstChild.textContent = vehicle.id;
       }
 
-      this.startAnimation();
+      this.maybeStartNextAnimation();
     }
 
-    startAnimation() {
+    maybeStartNextAnimation() {
+      if (this.isAnimating) {
+        return;
+      }
+
+      if (this.frameQueue.length <= this.lagFrameCount) {
+        return;
+      }
+
+      const nextFrame = this.frameQueue.shift();
+      this.startAnimation(nextFrame);
+    }
+
+    startAnimation(frame) {
+      if (!frame?.position) {
+        return;
+      }
+
       this.cancelAnimation();
       const startPosition = this.position;
       const startHeading = normalizeHeading(this.heading);
-      const endHeading = normalizeHeading(this.targetHeading);
+      const endHeading = normalizeHeading(frame.heading || 0);
       const headingDelta = shortestHeadingDelta(startHeading, endHeading);
+      const animationDuration = Math.max(300, frame.duration || MIN_ANIMATION_DURATION_MS);
 
-      this.animationStart = performance.now();
+      this.targetPosition = frame.position;
+      this.targetHeading = frame.heading || 0;
+      this.isAnimating = true;
+      this.animationStart = getTimestamp();
+
+      if (
+        startPosition.equals(this.targetPosition) &&
+        Math.abs(headingDelta) < 0.001
+      ) {
+        this.isAnimating = false;
+        this.animationStart = null;
+        this.heading = normalizeHeading(endHeading);
+        this.position = this.targetPosition;
+        this.draw();
+        this.maybeStartNextAnimation();
+        return;
+      }
 
       const step = (timestamp) => {
         if (!this.animationStart) {
@@ -178,7 +257,7 @@ function createVehicleOverlayClass(googleMaps) {
 
         const progress = Math.min(
           1,
-          (timestamp - this.animationStart) / ANIMATION_DURATION_MS
+          (timestamp - this.animationStart) / animationDuration
         );
 
         this.position = interpolateLatLng(
@@ -194,9 +273,12 @@ function createVehicleOverlayClass(googleMaps) {
           this.animationFrame = requestAnimationFrame(step);
         } else {
           this.animationStart = null;
+          this.animationFrame = null;
+          this.isAnimating = false;
           this.position = this.targetPosition;
           this.heading = normalizeHeading(endHeading);
           this.draw();
+          this.maybeStartNextAnimation();
         }
       };
 
@@ -208,6 +290,8 @@ function createVehicleOverlayClass(googleMaps) {
         cancelAnimationFrame(this.animationFrame);
         this.animationFrame = null;
       }
+      this.animationStart = null;
+      this.isAnimating = false;
     }
   };
 }
@@ -225,6 +309,7 @@ function createVehicleLayerClass(googleMaps) {
       this.refreshPromise = null;
       this.pendingRefreshRequiresClear = false;
       this.onVehiclesUpdated = null;
+      this.lastRefreshTimestamp = null;
     }
 
     async start() {
@@ -242,6 +327,7 @@ function createVehicleLayerClass(googleMaps) {
         clearTimeout(this.timerId);
         this.timerId = null;
       }
+      this.lastRefreshTimestamp = null;
     }
 
     clearOverlays() {
@@ -256,6 +342,7 @@ function createVehicleLayerClass(googleMaps) {
       this.vehicleIds = new Set(uniqueIds);
       this.fetcher.setVehicleIds(uniqueIds);
       this.stop();
+      this.lastRefreshTimestamp = null;
       try {
         await this.refresh(true);
       } catch (error) {
@@ -280,8 +367,20 @@ function createVehicleLayerClass(googleMaps) {
         if (!this.vehicleIds.size) {
           this.onVehiclesUpdated?.([]);
           this.clearOverlays();
+          this.lastRefreshTimestamp = null;
           return;
         }
+
+        const now = getTimestamp();
+        const elapsed = this.lastRefreshTimestamp
+          ? now - this.lastRefreshTimestamp
+          : REFRESH_INTERVAL_MS;
+        const baseDuration = clamp(
+          elapsed,
+          MIN_ANIMATION_DURATION_MS,
+          MAX_ANIMATION_DURATION_MS
+        );
+        this.lastRefreshTimestamp = now;
 
         const vehicles = await this.fetcher.fetchAll();
         const activeVehicles = vehicles.filter((vehicle) =>
@@ -291,16 +390,38 @@ function createVehicleLayerClass(googleMaps) {
 
         const seenIds = new Set();
         for (const vehicle of activeVehicles) {
-          if (!vehicle.lat || !vehicle.lon) {
+          if (
+            !Number.isFinite(vehicle.lat) ||
+            !Number.isFinite(vehicle.lon)
+          ) {
             continue;
           }
           const key = vehicle.id;
           seenIds.add(key);
+          const secsSinceReport =
+            Number.isFinite(vehicle.secsSinceReport) &&
+            vehicle.secsSinceReport >= 0
+              ? vehicle.secsSinceReport
+              : null;
+          const reportedAgoMs =
+            secsSinceReport !== null
+              ? vehicle.secsSinceReport * 1000
+              : baseDuration;
+          const frameDuration = clamp(
+            Math.max(baseDuration, reportedAgoMs),
+            MIN_ANIMATION_DURATION_MS,
+            MAX_ANIMATION_DURATION_MS
+          );
           if (this.overlays.has(key)) {
-            this.overlays.get(key).update(vehicle);
+            const overlay = this.overlays.get(key);
+            overlay.queueUpdate(vehicle, frameDuration);
           } else {
-            const overlay = new VehicleOverlay(this.map, vehicle);
+            const overlay = new VehicleOverlay(this.map, vehicle, {
+              lagFrameCount: FRAME_LAG_COUNT,
+              maxPendingFrames: MAX_PENDING_FRAMES,
+            });
             this.overlays.set(key, overlay);
+            overlay.queueUpdate(vehicle, frameDuration);
           }
         }
 
