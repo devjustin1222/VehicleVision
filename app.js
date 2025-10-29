@@ -131,8 +131,14 @@ function getScaleForZoom(zoom) {
     return 1;
   }
 
-  const base = 0.35 + (zoom - 10) * 0.12;
-  return clamp(base, 0.35, 1.8);
+  const minScale = 0.18;
+  const maxScale = 1.5;
+  const referenceZoom = 8;
+  const growthFactor = 1.28;
+
+  const scale =
+    minScale * Math.pow(growthFactor, Math.max(zoom - referenceZoom, -10));
+  return clamp(scale, minScale, maxScale);
 }
 
 function getTimestamp() {
@@ -827,8 +833,49 @@ function createControlPanelClass() {
       this.map.setOptions({
         styles: mapType === "roadmap" ? ROADMAP_STYLES : null,
       });
+      enforceTopDownView(this.map);
     }
   };
+}
+
+function enforceTopDownView(mapInstance) {
+  if (!mapInstance) {
+    return;
+  }
+
+  if (typeof mapInstance.getTilt === "function") {
+    const tilt = mapInstance.getTilt();
+    if (tilt !== 0 && typeof mapInstance.setTilt === "function") {
+      mapInstance.setTilt(0);
+    }
+  }
+
+  if (typeof mapInstance.getHeading === "function") {
+    const heading = mapInstance.getHeading();
+    if (heading !== 0 && typeof mapInstance.setHeading === "function") {
+      mapInstance.setHeading(0);
+    }
+  }
+}
+
+function installTopDownViewEnforcement(mapInstance, googleMaps) {
+  if (!mapInstance || !googleMaps?.event) {
+    return;
+  }
+
+  const enforce = () => enforceTopDownView(mapInstance);
+  enforce();
+
+  const events = [
+    "maptypeid_changed",
+    "tilt_changed",
+    "heading_changed",
+    "zoom_changed",
+  ];
+
+  for (const eventName of events) {
+    googleMaps.event.addListener(mapInstance, eventName, enforce);
+  }
 }
 
 function getMapStatusElement() {
@@ -935,6 +982,8 @@ function initMap() {
     disableDefaultUI: true,
     styles: ROADMAP_STYLES,
   });
+
+  installTopDownViewEnforcement(map, googleMaps);
 
   clearMapStatus();
 
