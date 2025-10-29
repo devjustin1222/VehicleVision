@@ -56,6 +56,25 @@
               </div>
             </div>
           </div>
+          <div class="panel-section">
+            <h2>Map display</h2>
+            <p class="panel-helper">
+              Switch between standard and satellite views for additional context.
+            </p>
+            <div class="field-group">
+              <label class="field-label" for="map-style-select">Map style</label>
+              <select
+                id="map-style-select"
+                class="select-control"
+                name="map-style"
+                aria-label="Map style"
+              >
+                <option value="roadmap">Default</option>
+                <option value="satellite">Satellite</option>
+                <option value="hybrid">Hybrid</option>
+              </select>
+            </div>
+          </div>
         </aside>
         <section id="map" aria-label="Vehicle map">
           <div id="map-status" class="map-status" role="status">Loading map…</div>

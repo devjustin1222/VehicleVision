@@ -6,6 +6,12 @@ const MAX_ANIMATION_DURATION_MS = REFRESH_INTERVAL_MS * 3;
 const API_BASE_URL = "https://retro.umoiq.com/service/publicXMLFeed";
 const AGENCY_TAG = "ttc";
 const MAP_STATUS_ID = "map-status";
+const ROADMAP_STYLES = [
+  {
+    featureType: "poi",
+    stylers: [{ visibility: "off" }],
+  },
+];
 
 let map;
 
@@ -120,6 +126,15 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function getScaleForZoom(zoom) {
+  if (!Number.isFinite(zoom)) {
+    return 1;
+  }
+
+  const base = 0.35 + (zoom - 10) * 0.12;
+  return clamp(base, 0.35, 1.8);
+}
+
 function getTimestamp() {
   return typeof performance !== "undefined" && performance.now
     ? performance.now()
@@ -197,8 +212,11 @@ function createVehicleOverlayClass(googleMaps) {
       this.div.style.left = `${position.x}px`;
       this.div.style.top = `${position.y}px`;
 
+      const mapInstance = this.getMap?.() || this.map;
+      const zoom = mapInstance?.getZoom?.();
+      const scale = getScaleForZoom(zoom);
       const rotation = this.heading - 90;
-      this.div.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
+      this.div.style.transform = `translate(-50%, -50%) rotate(${rotation}deg) scale(${scale})`;
     }
 
     queueUpdate(vehicle, durationMs) {
@@ -208,7 +226,7 @@ function createVehicleOverlayClass(googleMaps) {
 
       this.vehicle = vehicle;
       this.targetPosition = new googleMaps.LatLng(vehicle.lat, vehicle.lon);
-      this.targetHeading = vehicle.heading || 0;
+      this.targetHeading = normalizeHeading(vehicle.heading || 0);
 
       const frame = {
         position: this.targetPosition,
@@ -593,20 +611,23 @@ function createVehicleLayerClass(googleMaps) {
 
 function createControlPanelClass() {
   return class ControlPanel {
-    constructor(vehicleLayer) {
+    constructor(vehicleLayer, mapInstance = null) {
       this.vehicleLayer = vehicleLayer;
+      this.map = mapInstance;
       this.form = document.getElementById("vehicle-form");
       this.input = document.getElementById("vehicle-input");
       this.list = document.getElementById("tracked-vehicles");
       this.emptyState = document.getElementById("vehicle-empty-state");
       this.vehicleItems = new Map();
       this.vehicleOrder = [];
+      this.mapStyleSelect = document.getElementById("map-style-select");
 
       this.vehicleLayer.onVehiclesUpdated = (snapshot) => {
         this.updateVehicleStatuses(snapshot);
       };
 
       this.attachEvents();
+      this.syncMapStyleSelect();
       this.updateEmptyState();
     }
 
@@ -618,6 +639,10 @@ function createControlPanelClass() {
 
       this.input?.addEventListener("input", () => {
         this.input.setCustomValidity("");
+      });
+
+      this.mapStyleSelect?.addEventListener("change", () => {
+        this.handleMapStyleChange();
       });
     }
 
@@ -777,6 +802,32 @@ function createControlPanelClass() {
         this.list.style.display = hasVehicles ? "grid" : "none";
       }
     }
+
+    syncMapStyleSelect() {
+      if (!this.mapStyleSelect || !this.map?.getMapTypeId) {
+        return;
+      }
+
+      const currentType = this.map.getMapTypeId();
+      this.mapStyleSelect.value =
+        typeof currentType === "string" && currentType ? currentType : "roadmap";
+    }
+
+    handleMapStyleChange() {
+      if (!this.mapStyleSelect) {
+        return;
+      }
+
+      const mapType = this.mapStyleSelect.value || "roadmap";
+      if (!this.map) {
+        return;
+      }
+
+      this.map.setMapTypeId(mapType);
+      this.map.setOptions({
+        styles: mapType === "roadmap" ? ROADMAP_STYLES : null,
+      });
+    }
   };
 }
 
@@ -882,18 +933,13 @@ function initMap() {
     center: { lat: 43.6532, lng: -79.3832 },
     zoom: 12,
     disableDefaultUI: true,
-    styles: [
-      {
-        featureType: "poi",
-        stylers: [{ visibility: "off" }],
-      },
-    ],
+    styles: ROADMAP_STYLES,
   });
 
   clearMapStatus();
 
   const vehicleLayer = new VehicleLayer(map);
-  new ControlPanel(vehicleLayer);
+  new ControlPanel(vehicleLayer, map);
   vehicleLayer.start();
 }
 
